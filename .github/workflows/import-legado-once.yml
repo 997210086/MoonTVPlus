@@ -107,9 +107,11 @@ jobs:
 
           aggregate_status=$(curl -sS --max-time 120 -b cookies.txt \
             -o aggregate-search-response.json -w '%{http_code}' \
-            --get --data-urlencode 'q=盗墓笔记' \
+            --get --data-urlencode 'q=斗罗大陆' \
             "$SITE_BASE/api/books/search")
           echo "Aggregate search: $aggregate_status"
           if [ -s aggregate-search-response.json ]; then
             jq '{resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, errorGroups: (.failedSources | group_by(.error) | map({error: .[0].error, count: length}) | sort_by(-.count))}' aggregate-search-response.json || cat aggregate-search-response.json
           fi
+          test "$aggregate_status" = "200"
+          jq -e '(.results | length) > 0' aggregate-search-response.json > /dev/null

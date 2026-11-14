@@ -37,54 +37,69 @@ export async function GET(request: NextRequest) {
       };
 
       try {
-        const sources = await bookProvider.getSearchSources(sourceId);
+        const { sources, availableSources } =
+          await bookProvider.getSearchSourceSelection(sourceId);
         let completedSources = 0;
         let totalResults = 0;
-        const failedSources: Array<{ sourceId: string; sourceName: string; error: string }> = [];
+        const failedSources: Array<{
+          sourceId: string;
+          sourceName: string;
+          error: string;
+        }> = [];
 
-        send({ type: 'start', totalSources: sources.length });
+        send({ type: 'start', totalSources: sources.length, availableSources });
 
-        await Promise.all(
-          sources.map(async (source) => {
-            try {
-              const result = await bookProvider.searchBooksSource(q, source);
-              completedSources += 1;
-              totalResults += result.results.length;
-              send({
-                type: 'source_result',
-                sourceId: source.id,
-                sourceName: source.name,
-                results: result.results,
-                completedSources,
-                totalSources: sources.length,
-              });
-            } catch (error) {
-              const failure = {
-                sourceId: source.id,
-                sourceName: source.name,
-                error: error instanceof Error ? error.message : '未知错误',
-              };
-              completedSources += 1;
-              failedSources.push(failure);
-              send({
-                type: 'source_error',
-                ...failure,
-                completedSources,
-                totalSources: sources.length,
-              });
-            }
-          })
+        const concurrency = Math.min(
+          8,
+          Math.max(1, Number(process.env.BOOK_SEARCH_CONCURRENCY) || 4)
         );
+        for (let offset = 0; offset < sources.length; offset += concurrency) {
+          await Promise.all(
+            sources.slice(offset, offset + concurrency).map(async (source) => {
+              try {
+                const result = await bookProvider.searchBooksSource(q, source);
+                completedSources += 1;
+                totalResults += result.results.length;
+                send({
+                  type: 'source_result',
+                  sourceId: source.id,
+                  sourceName: source.name,
+                  results: result.results,
+                  completedSources,
+                  totalSources: sources.length,
+                });
+              } catch (error) {
+                const failure = {
+                  sourceId: source.id,
+                  sourceName: source.name,
+                  error: error instanceof Error ? error.message : '未知错误',
+                };
+                completedSources += 1;
+                failedSources.push(failure);
+                send({
+                  type: 'source_error',
+                  ...failure,
+                  completedSources,
+                  totalSources: sources.length,
+                });
+              }
+            })
+          );
+        }
 
         send({
           type: 'complete',
           completedSources,
           totalSources: sources.length,
+          availableSources,
           totalResults,
           failedSources,
         });
       } catch (error) {
-        send({ type: 'error', error: error instanceof Error ? error.message : '搜索失败' });
+        send({
+          type: 'error',
+          error: error instanceof Error ? error.message : '搜索失败',
+        });
       } finally {
         closed = true;
         try {

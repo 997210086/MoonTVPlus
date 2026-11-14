@@ -21,7 +21,6 @@ export interface LegadoRuleSearch {
   wordCount?: string;
 }
 
-
 export type LegadoRuleExplore = LegadoRuleSearch;
 
 export interface LegadoRuleBookInfo {
@@ -170,6 +169,8 @@ export interface BookSearchFailure {
 export interface BookSearchResult {
   results: BookListItem[];
   failedSources: BookSearchFailure[];
+  searchedSources?: number;
+  availableSources?: number;
 }
 
 export interface BookLocator {

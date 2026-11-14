@@ -73,6 +73,7 @@ export default function BooksSearchPage() {
   const [executedScope, setExecutedScope] = useState('');
   const [totalSources, setTotalSources] = useState(0);
   const [completedSources, setCompletedSources] = useState(0);
+  const [availableSources, setAvailableSources] = useState(0);
   const [useFluidSearch, setUseFluidSearch] = useState(true);
 
   const restoredRef = useRef(false);
@@ -223,6 +224,7 @@ export default function BooksSearchPage() {
       setExecutedScope(normalizedSourceId);
       setTotalSources(0);
       setCompletedSources(0);
+      setAvailableSources(0);
 
       const cached = forceRefresh
         ? null
@@ -237,6 +239,7 @@ export default function BooksSearchPage() {
         setLoading(false);
         setTotalSources(1);
         setCompletedSources(1);
+        setAvailableSources(1);
         return;
       }
 
@@ -261,6 +264,9 @@ export default function BooksSearchPage() {
             switch (payload.type) {
               case 'start':
                 setTotalSources(payload.totalSources || 0);
+                setAvailableSources(
+                  payload.availableSources || payload.totalSources || 0
+                );
                 setCompletedSources(0);
                 break;
               case 'source_result':
@@ -289,6 +295,9 @@ export default function BooksSearchPage() {
                   [];
                 setCompletedSources(
                   payload.completedSources || payload.totalSources || 0
+                );
+                setAvailableSources(
+                  payload.availableSources || payload.totalSources || 0
                 );
                 if (pendingResultsRef.current.length > 0) {
                   const toAppend = pendingResultsRef.current;
@@ -369,8 +378,9 @@ export default function BooksSearchPage() {
           failedSources: [],
         };
         setResult(nextResult);
-        setTotalSources(1);
-        setCompletedSources(1);
+        setTotalSources(json.searchedSources || 1);
+        setCompletedSources(json.searchedSources || 1);
+        setAvailableSources(json.availableSources || 1);
         setCachedResult(trimmed, normalizedSourceId, nextResult);
         saveSearchState({
           q: trimmed,
@@ -439,6 +449,7 @@ export default function BooksSearchPage() {
       setHasSearched(false);
       setExecutedScope('');
       setTotalSources(0);
+      setAvailableSources(0);
       setCompletedSources(0);
       setError('');
       return;
@@ -482,8 +493,11 @@ export default function BooksSearchPage() {
       );
     }
     if (sources.length === 0) return '全部书源';
+    if (availableSources > totalSources && totalSources > 0) {
+      return '全部书源 · 优先 ' + totalSources + '/' + availableSources;
+    }
     return `全部书源 · ${sources.length} 个书源`;
-  }, [executedScope, sources]);
+  }, [availableSources, executedScope, sources, totalSources]);
 
   const searchProgress =
     totalSources > 0
