@@ -65,3 +65,17 @@ jobs:
           test "$verify_status" = "200"
           jq -e '.Config.OPDSConfig.Enabled == true' verify-response.json > /dev/null
           jq '{enabled: .Config.OPDSConfig.Enabled, subscriptions: (.Config.OPDSConfig.LegadoSubscriptions | length), sourceCount: .Config.OPDSConfig.LegadoSubscriptions[0].sourceCount}' verify-response.json
+
+          home_status=$(curl -sS --max-time 60 -b cookies.txt \
+            -o authenticated-home.html -w '%{http_code}' \
+            "$SITE_BASE/")
+          test "$home_status" = "200"
+          grep -q '"BOOKS_ENABLED":true' authenticated-home.html
+          echo "Authenticated books entry: enabled"
+
+          books_status=$(curl -sS --max-time 120 -b cookies.txt \
+            -o books-sources-response.json -w '%{http_code}' \
+            "$SITE_BASE/api/books/sources")
+          test "$books_status" = "200"
+          jq -e '.sources | type == "array"' books-sources-response.json > /dev/null
+          jq '{sourceCount: (.sources | length), firstSources: [.sources[0:3][] | .name]}' books-sources-response.json
