@@ -1,0 +1,67 @@
+name: Import Legado Subscription
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    env:
+      SITE_BASE: https://moontv-plus.997210086.workers.dev
+      LEGADO_URL: https://www.yckceo.com/yuedu/shuyuans/json/id/1331.json
+    steps:
+      - name: Login and import subscription
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          login_body=$(jq -n --arg username "$USERNAME" --arg password "$PASSWORD" \
+            '{username: $username, password: $password}')
+          login_status=$(curl -sS --max-time 60 -c cookies.txt \
+            -o login-response.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "$login_body" \
+            "$SITE_BASE/api/login")
+          test "$login_status" = "200"
+          echo "Login: $login_status"
+
+          import_body=$(jq -n --arg name 'YCK 1331 书源合集' --arg url "$LEGADO_URL" \
+            '{name: $name, url: $url}')
+          import_status=$(curl -sS --max-time 300 -b cookies.txt \
+            -o import-response.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "$import_body" \
+            "$SITE_BASE/api/admin/legado-subscriptions/import")
+          test "$import_status" = "200"
+          jq -e '.success == true' import-response.json > /dev/null
+          echo "Import: $import_status"
+          jq '{sourceCount: .subscription.sourceCount, lastSuccessAt: .subscription.lastSuccessAt}' import-response.json
+
+          config_status=$(curl -sS --max-time 60 -b cookies.txt \
+            -o admin-config-response.json -w '%{http_code}' \
+            "$SITE_BASE/api/admin/config")
+          test "$config_status" = "200"
+          jq -e '.Config' admin-config-response.json > /dev/null
+
+          jq '.Config | .OPDSConfig = ((.OPDSConfig // {}) | .Enabled = true)' \
+            admin-config-response.json > admin-config.json
+          save_status=$(curl -sS --max-time 120 -b cookies.txt \
+            -o save-response.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d @admin-config.json \
+            "$SITE_BASE/api/admin/config")
+          test "$save_status" = "200"
+          jq -e '.success == true' save-response.json > /dev/null
+          echo "Save: $save_status"
+
+          verify_status=$(curl -sS --max-time 60 -b cookies.txt \
+            -o verify-response.json -w '%{http_code}' \
+            "$SITE_BASE/api/admin/config")
+          test "$verify_status" = "200"
+          jq -e '.Config.OPDSConfig.Enabled == true' verify-response.json > /dev/null
+          jq '{enabled: .Config.OPDSConfig.Enabled, subscriptions: (.Config.OPDSConfig.LegadoSubscriptions | length), sourceCount: .Config.OPDSConfig.LegadoSubscriptions[0].sourceCount}' verify-response.json
