@@ -79,6 +79,17 @@ jobs:
           test "$books_status" = "200"
           jq -e '.sources | type == "array"' books-sources-response.json > /dev/null
           jq '{sourceCount: (.sources | length), firstSources: [.sources[0:3][] | .name]}' books-sources-response.json
+          jq '{searchSupportedCount: ([.sources[] | select(.capabilities.searchSupported == true)] | length), firstSearchable: [.sources[] | select(.capabilities.searchSupported == true) | .name][0:5], unsupportedCount: ([.sources[] | select(.capabilities.searchSupported != true)] | length)}' books-sources-response.json
+
+          SEARCH_SOURCE_ID=$(jq -r '.sources[] | select(.capabilities.searchSupported == true) | .id' books-sources-response.json | head -n 1)
+          if [ -n "$SEARCH_SOURCE_ID" ]; then
+            probe_status=$(curl -sS --max-time 120 -b cookies.txt \
+              -o searchable-probe-response.json -w '%{http_code}' \
+              --get --data-urlencode 'q=斗罗大陆' --data-urlencode "sourceId=$SEARCH_SOURCE_ID" \
+              "$SITE_BASE/api/books/search")
+            echo "First searchable source probe: $probe_status"
+            jq '{sourceId: $sourceId, resultCount: (.results | length), errors: [.failedSources[].error]}' --arg sourceId "$SEARCH_SOURCE_ID" searchable-probe-response.json
+          fi
 
           SOURCE_ID=$(jq -r '.sources[] | select(.name == "盗墓笔记（优+）") | .id' books-sources-response.json | head -n 1)
           test -n "$SOURCE_ID"
@@ -95,5 +106,5 @@ jobs:
             "$SITE_BASE/api/books/search")
           echo "Aggregate search: $aggregate_status"
           if [ -s aggregate-search-response.json ]; then
-            jq '{resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, firstErrors: [.failedSources[0:3][] | {sourceName, error}]}' aggregate-search-response.json || cat aggregate-search-response.json
+            jq '{resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, errorGroups: (.failedSources | group_by(.error) | map({error: .[0].error, count: length}) | sort_by(-.count))}' aggregate-search-response.json || cat aggregate-search-response.json
           fi
