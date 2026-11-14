@@ -68,6 +68,7 @@ jobs:
           echo "CONFIG_SUBSCRIPTION_URL=${{ secrets.CONFIG_SUBSCRIPTION_URL }}" >> $GITHUB_ENV
           echo "ENABLE_TVBOX_SUBSCRIBE=${{ secrets.ENABLE_TVBOX_SUBSCRIBE }}" >> $GITHUB_ENV
           echo "TVBOX_SUBSCRIBE_TOKEN=${{ secrets.TVBOX_SUBSCRIBE_TOKEN }}" >> $GITHUB_ENV
+          echo "OPDS_ENABLED=${{ secrets.OPDS_ENABLED }}" >> $GITHUB_ENV
           echo "WATCH_ROOM_ENABLED=${{ secrets.WATCH_ROOM_ENABLED }}" >> $GITHUB_ENV
           echo "WATCH_ROOM_EXTERNAL_SERVER_AUTH=${{ secrets.WATCH_ROOM_EXTERNAL_SERVER_AUTH }}" >> $GITHUB_ENV
           echo "WATCH_ROOM_EXTERNAL_SERVER_URL=${{ secrets.WATCH_ROOM_EXTERNAL_SERVER_URL }}" >> $GITHUB_ENV
@@ -140,6 +141,7 @@ jobs:
           append_var "CONFIG_SUBSCRIPTION_URL" "${{ secrets.CONFIG_SUBSCRIPTION_URL }}"
           append_var ENABLE_TVBOX_SUBSCRIBE "${{ secrets.ENABLE_TVBOX_SUBSCRIBE }}"
           append_var TVBOX_SUBSCRIBE_TOKEN "${{ secrets.TVBOX_SUBSCRIBE_TOKEN }}"
+          append_var OPDS_ENABLED "${{ secrets.OPDS_ENABLED }}"
           append_var WATCH_ROOM_ENABLED "${{ secrets.WATCH_ROOM_ENABLED }}"
           append_var WATCH_ROOM_EXTERNAL_SERVER_AUTH "${{ secrets.WATCH_ROOM_EXTERNAL_SERVER_AUTH }}"
           append_var WATCH_ROOM_EXTERNAL_SERVER_URL "${{ secrets.WATCH_ROOM_EXTERNAL_SERVER_URL }}"
