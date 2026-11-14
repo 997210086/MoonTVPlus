@@ -79,3 +79,21 @@ jobs:
           test "$books_status" = "200"
           jq -e '.sources | type == "array"' books-sources-response.json > /dev/null
           jq '{sourceCount: (.sources | length), firstSources: [.sources[0:3][] | .name]}' books-sources-response.json
+
+          SOURCE_ID=$(jq -r '.sources[] | select(.name == "盗墓笔记（优+）") | .id' books-sources-response.json | head -n 1)
+          test -n "$SOURCE_ID"
+          single_status=$(curl -sS --max-time 120 -b cookies.txt \
+            -o single-search-response.json -w '%{http_code}' \
+            --get --data-urlencode 'q=盗墓笔记' --data-urlencode "sourceId=$SOURCE_ID" \
+            "$SITE_BASE/api/books/search")
+          echo "Single source search: $single_status"
+          jq '{sourceId: $sourceId, resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, firstError: .failedSources[0].error}' --arg sourceId "$SOURCE_ID" single-search-response.json
+
+          aggregate_status=$(curl -sS --max-time 120 -b cookies.txt \
+            -o aggregate-search-response.json -w '%{http_code}' \
+            --get --data-urlencode 'q=盗墓笔记' \
+            "$SITE_BASE/api/books/search")
+          echo "Aggregate search: $aggregate_status"
+          if [ -s aggregate-search-response.json ]; then
+            jq '{resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, firstErrors: [.failedSources[0:3][] | {sourceName, error}]}' aggregate-search-response.json || cat aggregate-search-response.json
+          fi
