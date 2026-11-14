@@ -81,7 +81,7 @@ jobs:
           jq '{sourceCount: (.sources | length), firstSources: [.sources[0:3][] | .name]}' books-sources-response.json
           jq '{searchSupportedCount: ([.sources[] | select(.capabilities.searchSupported == true)] | length), firstSearchable: [.sources[] | select(.capabilities.searchSupported == true) | .name][0:5], unsupportedCount: ([.sources[] | select(.capabilities.searchSupported != true)] | length)}' books-sources-response.json
 
-          SEARCH_SOURCE_ID=$(jq -r '.sources[] | select(.capabilities.searchSupported == true) | .id' books-sources-response.json | head -n 1)
+          SEARCH_SOURCE_ID=$(jq -r 'first(.sources[] | select(.capabilities.searchSupported == true) | .id) // empty' books-sources-response.json)
           if [ -n "$SEARCH_SOURCE_ID" ]; then
             probe_status=$(curl -sS --max-time 120 -b cookies.txt \
               -o searchable-probe-response.json -w '%{http_code}' \
@@ -91,14 +91,19 @@ jobs:
             jq '{sourceId: $sourceId, resultCount: (.results | length), errors: [.failedSources[].error]}' --arg sourceId "$SEARCH_SOURCE_ID" searchable-probe-response.json
           fi
 
-          SOURCE_ID=$(jq -r '.sources[] | select(.name == "盗墓笔记（优+）") | .id' books-sources-response.json | head -n 1)
-          test -n "$SOURCE_ID"
-          single_status=$(curl -sS --max-time 120 -b cookies.txt \
-            -o single-search-response.json -w '%{http_code}' \
-            --get --data-urlencode 'q=盗墓笔记' --data-urlencode "sourceId=$SOURCE_ID" \
-            "$SITE_BASE/api/books/search")
-          echo "Single source search: $single_status"
-          jq '{sourceId: $sourceId, resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, firstError: .failedSources[0].error}' --arg sourceId "$SOURCE_ID" single-search-response.json
+          for SOURCE_NAME in '顶点小说（优++）' '话本小说（优++）' '抖趣小说（优++）' '双零电子（优）'; do
+            SOURCE_ID=$(jq -r --arg name "$SOURCE_NAME" 'first(.sources[] | select(.name == $name) | .id) // empty' books-sources-response.json)
+            if [ -z "$SOURCE_ID" ]; then
+              echo "Source missing: $SOURCE_NAME"
+              continue
+            fi
+            single_status=$(curl -sS --max-time 120 -b cookies.txt \
+              -o "single-search-$SOURCE_ID.json" -w '%{http_code}' \
+              --get --data-urlencode 'q=斗罗大陆' --data-urlencode "sourceId=$SOURCE_ID" \
+              "$SITE_BASE/api/books/search")
+            echo "Single source search: $SOURCE_NAME ($single_status)"
+            jq '{sourceName: $name, resultCount: (.results | length), failedCount: (.failedSources | length), firstResult: .results[0].title, errors: [.failedSources[].error]}' --arg name "$SOURCE_NAME" "single-search-$SOURCE_ID.json"
+          done
 
           aggregate_status=$(curl -sS --max-time 120 -b cookies.txt \
             -o aggregate-search-response.json -w '%{http_code}' \
