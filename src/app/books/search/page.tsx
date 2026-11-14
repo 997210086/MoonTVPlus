@@ -50,7 +50,7 @@ function detailHref(item: BookListItem) {
   return buildBookDetailPath(item.sourceId, item.id);
 }
 
-const BOOK_SEARCH_STATE_KEY = 'book_search_state';
+const BOOK_SEARCH_STATE_KEY = 'book_search_state_v2';
 const EMPTY_RESULT: BookSearchResult = { results: [], failedSources: [] };
 const QUICK_SEARCHES = ['三体', '刘慈欣', '东野圭吾', '哈利波特'];
 
@@ -85,7 +85,7 @@ export default function BooksSearchPage() {
 
   const getCacheKey = useCallback(
     (keyword: string, selectedSourceId: string) =>
-      `book_search_cache_${selectedSourceId || 'all'}_${keyword.trim()}`,
+      `book_search_cache_v2_${selectedSourceId || 'all'}_${keyword.trim()}`,
     []
   );
 
