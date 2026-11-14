@@ -1012,6 +1012,14 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       process.env.OPDS_CACHE_TTL_MS || 10 * 60 * 1000
     );
   }
+  // Existing D1 installs keep their saved config, so an environment switch must
+  // still be able to turn the library on after the initial deployment.
+  if (
+    process.env.OPDS_ENABLED === 'true' ||
+    process.env.LEGADO_ENABLED === 'true'
+  ) {
+    adminConfig.OPDSConfig.Enabled = true;
+  }
 
   if (!adminConfig.NetDiskConfig) {
     adminConfig.NetDiskConfig = {
