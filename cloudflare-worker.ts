@@ -25,6 +25,17 @@ interface Env {
   [key: string]: unknown;
 }
 
+function withStaticAssetCache(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -37,7 +48,16 @@ export default {
       return env.WATCH_ROOM.get(id).fetch(request);
     }
 
-    return openNextWorker.fetch(request, env, ctx);
+    const response = await openNextWorker.fetch(request, env, ctx);
+
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      url.pathname.startsWith('/_next/static/')
+    ) {
+      return withStaticAssetCache(response);
+    }
+
+    return response;
   },
 
   // 定时任务：直接内部打一次 /api/cron/<password>。
