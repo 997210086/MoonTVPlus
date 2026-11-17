@@ -225,7 +225,9 @@ jobs:
           for migration_file in ./migrations/*.sql; do
             if [ -f "$migration_file" ]; then
               echo "Executing migration: $(basename $migration_file)"
-              if ! wrangler d1 execute moontvplus --remote --file="$migration_file"; then
+              migration_log="$(mktemp)"
+              if ! wrangler d1 execute moontvplus --remote --file="$migration_file" >"$migration_log" 2>&1; then
+                cat "$migration_log"
                 # All migrations are idempotent except legacy ALTER TABLE statements.
                 # Those can legitimately report duplicate column errors on an already-upgraded DB.
                 case "$(basename "$migration_file")" in
@@ -233,15 +235,23 @@ jobs:
                     echo "⚠️ Legacy column migration already applied; continuing"
                     ;;
                   *)
+                    if grep -q "Authentication error" "$migration_log"; then
+                      echo "::warning::Cloudflare token cannot edit D1. Runtime schema guard will provision book tables; grant D1 edit permission for future migrations."
+                      rm -f "$migration_log"
+                      continue
+                    fi
                     echo "❌ Migration failed: $(basename "$migration_file")"
                     exit 1
                     ;;
                 esac
+              else
+                cat "$migration_log"
               fi
+              rm -f "$migration_log"
             fi
           done
 
-          echo "✅ Migrations completed"
+          echo "✅ Migration step completed"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -254,3 +264,29 @@ jobs:
           command: deploy
           packageManager: pnpm
           wranglerVersion: "4.60.0"
+
+      - name: Smoke test books API
+        env:
+          OWNER_USERNAME: ${{ secrets.USERNAME }}
+          OWNER_PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          cookie_jar="$(mktemp)"
+          login_payload="$(jq -n --arg username "$OWNER_USERNAME" --arg password "$OWNER_PASSWORD" '{username: $username, password: $password}')"
+          login_status="$(curl -sS -c "$cookie_jar" -o /tmp/moontv-login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "$login_payload" \
+            https://moomtv.990720.xyz/api/login)"
+          if [ "$login_status" != "200" ]; then
+            echo "❌ Books smoke test login failed with HTTP $login_status"
+            cat /tmp/moontv-login.json
+            exit 1
+          fi
+
+          shelf_status="$(curl -sS -b "$cookie_jar" -o /tmp/moontv-shelf.json -w '%{http_code}' \
+            https://moomtv.990720.xyz/api/books/shelf)"
+          if [ "$shelf_status" != "200" ]; then
+            echo "❌ Books shelf smoke test failed with HTTP $shelf_status"
+            cat /tmp/moontv-shelf.json
+            exit 1
+          fi
+          echo "✅ Books shelf API is available"
