@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS music_v2_history (
   last_quality TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  sort_order REAL,
   UNIQUE(username, song_id),
   FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
 );

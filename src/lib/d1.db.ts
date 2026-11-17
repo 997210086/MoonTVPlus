@@ -32,6 +32,7 @@ import { userInfoCache } from './user-cache';
 import { dispatchNotificationChannels } from './notification-dispatch';
 
 const bookSchemaReady = new WeakMap<DatabaseAdapter, Promise<void>>();
+const musicSchemaReady = new WeakMap<DatabaseAdapter, Promise<void>>();
 
 async function ensureBookSchema(db: DatabaseAdapter): Promise<void> {
   const existing = bookSchemaReady.get(db);
@@ -102,6 +103,93 @@ async function ensureBookSchema(db: DatabaseAdapter): Promise<void> {
     await ready;
   } catch (error) {
     bookSchemaReady.delete(db);
+    throw error;
+  }
+}
+
+async function ensureMusicSchema(db: DatabaseAdapter): Promise<void> {
+  const existing = musicSchemaReady.get(db);
+  if (existing) return existing;
+
+  const ready = (async () => {
+    const sql = `
+      CREATE TABLE IF NOT EXISTS music_v2_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        song_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        songmid TEXT,
+        name TEXT NOT NULL,
+        artist TEXT NOT NULL,
+        album TEXT,
+        cover TEXT,
+        duration_text TEXT,
+        duration_sec REAL,
+        play_progress_sec REAL NOT NULL DEFAULT 0,
+        last_played_at INTEGER NOT NULL,
+        play_count INTEGER NOT NULL DEFAULT 0,
+        last_quality TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        sort_order REAL,
+        UNIQUE(username, song_id),
+        FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_music_v2_history_username ON music_v2_history(username, last_played_at DESC);
+      CREATE TABLE IF NOT EXISTS music_v2_playlists (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        cover TEXT,
+        song_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_music_v2_playlists_username ON music_v2_playlists(username, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS music_v2_playlist_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        playlist_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        song_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        songmid TEXT,
+        name TEXT NOT NULL,
+        artist TEXT NOT NULL,
+        album TEXT,
+        cover TEXT,
+        duration_text TEXT,
+        duration_sec REAL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        added_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(playlist_id, song_id),
+        FOREIGN KEY (playlist_id) REFERENCES music_v2_playlists(id) ON DELETE CASCADE,
+        FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_music_v2_playlist_items_playlist ON music_v2_playlist_items(playlist_id, sort_order ASC);
+    `;
+
+    const statements = sql
+      .split(';')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (db.batch) {
+      await db.batch(statements.map((statement) => db.prepare(statement)));
+      return;
+    }
+
+    for (const statement of statements) {
+      await db.prepare(statement).run();
+    }
+  })();
+
+  musicSchemaReady.set(db, ready);
+  try {
+    await ready;
+  } catch (error) {
+    musicSchemaReady.delete(db);
     throw error;
   }
 }
@@ -911,6 +999,7 @@ export class D1Storage implements IStorage {
 
   async listMusicV2History(userName: string): Promise<MusicV2HistoryRecord[]> {
     try {
+      await ensureMusicSchema(this.db);
       const results = await this.db
         // 按队列顺序返回（sort_order 由拖拽维护）；当前播放项由最大 last_played_at 决定
         .prepare(
@@ -950,6 +1039,7 @@ export class D1Storage implements IStorage {
     record: MusicV2HistoryRecord
   ): Promise<void> {
     try {
+      await ensureMusicSchema(this.db);
       await this.db
         .prepare(
           `
@@ -1011,6 +1101,7 @@ export class D1Storage implements IStorage {
   }
 
   async deleteMusicV2History(userName: string, songId: string): Promise<void> {
+    await ensureMusicSchema(this.db);
     await this.db
       .prepare(
         'DELETE FROM music_v2_history WHERE username = ? AND song_id = ?'
@@ -1020,6 +1111,7 @@ export class D1Storage implements IStorage {
   }
 
   async clearMusicV2History(userName: string): Promise<void> {
+    await ensureMusicSchema(this.db);
     await this.db
       .prepare('DELETE FROM music_v2_history WHERE username = ?')
       .bind(userName)
@@ -1038,6 +1130,7 @@ export class D1Storage implements IStorage {
     }
   ): Promise<void> {
     const now = Date.now();
+    await ensureMusicSchema(this.db);
     await this.db
       .prepare(
         `
@@ -1061,6 +1154,7 @@ export class D1Storage implements IStorage {
   async getMusicV2Playlist(
     playlistId: string
   ): Promise<MusicV2PlaylistRecord | null> {
+    await ensureMusicSchema(this.db);
     const row: any = await this.db
       .prepare('SELECT * FROM music_v2_playlists WHERE id = ?')
       .bind(playlistId)
@@ -1083,6 +1177,7 @@ export class D1Storage implements IStorage {
   async listMusicV2Playlists(
     userName: string
   ): Promise<MusicV2PlaylistRecord[]> {
+    await ensureMusicSchema(this.db);
     const results = await this.db
       .prepare(
         'SELECT * FROM music_v2_playlists WHERE username = ? ORDER BY updated_at DESC'
@@ -1113,6 +1208,7 @@ export class D1Storage implements IStorage {
       song_count?: number;
     }
   ): Promise<void> {
+    await ensureMusicSchema(this.db);
     const fields: string[] = [];
     const values: any[] = [];
 
@@ -1146,6 +1242,7 @@ export class D1Storage implements IStorage {
   }
 
   async deleteMusicV2Playlist(playlistId: string): Promise<void> {
+    await ensureMusicSchema(this.db);
     await this.db
       .prepare('DELETE FROM music_v2_playlists WHERE id = ?')
       .bind(playlistId)
@@ -1156,6 +1253,7 @@ export class D1Storage implements IStorage {
     playlistId: string,
     item: MusicV2PlaylistItem
   ): Promise<void> {
+    await ensureMusicSchema(this.db);
     const playlist = await this.getMusicV2Playlist(playlistId);
     if (!playlist) {
       throw new Error('歌单不存在');
@@ -1221,6 +1319,7 @@ export class D1Storage implements IStorage {
     playlistId: string,
     songId: string
   ): Promise<void> {
+    await ensureMusicSchema(this.db);
     await this.db
       .prepare(
         'DELETE FROM music_v2_playlist_items WHERE playlist_id = ? AND song_id = ?'
@@ -1238,6 +1337,7 @@ export class D1Storage implements IStorage {
   async listMusicV2PlaylistItems(
     playlistId: string
   ): Promise<MusicV2PlaylistItem[]> {
+    await ensureMusicSchema(this.db);
     const results = await this.db
       .prepare(
         'SELECT * FROM music_v2_playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC, added_at ASC'
@@ -1268,6 +1368,7 @@ export class D1Storage implements IStorage {
     playlistId: string,
     songId: string
   ): Promise<boolean> {
+    await ensureMusicSchema(this.db);
     const row = await this.db
       .prepare(
         'SELECT 1 FROM music_v2_playlist_items WHERE playlist_id = ? AND song_id = ? LIMIT 1'
