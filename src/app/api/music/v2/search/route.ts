@@ -5,11 +5,11 @@ import {
   lxGetJson,
   LxServerSong,
   normalizeLxSong,
-  unwrapLxArray,
 } from '@/lib/music-v2';
 import { badRequest, internalError } from '@/lib/music-v2-api';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,7 +31,15 @@ export async function GET(request: NextRequest) {
       `/api/music/search?name=${encodeURIComponent(q)}&source=${source}&type=${type}&page=${page}&limit=${limit}`,
       'none'
     );
-    const list = unwrapLxArray<any>(payload);
+    const list: any[] = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.list)
+        ? payload.list
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.data?.list)
+            ? payload.data.list
+            : [];
 
     return NextResponse.json(
       {
