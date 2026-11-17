@@ -962,8 +962,10 @@ function ChapterReader({ manifest }: { manifest: BookReadManifest }) {
       if (chaptersLoaded && chapters.length === 0) setLoading(false);
       return;
     }
+    let cancelled = false;
     stopTts(true);
     setLoading(true);
+    setChapter(null);
     setError('');
     lastChapterScrollMetricsRef.current = null;
     setChapterScrollTop(scrollRef.current, 0);
@@ -979,6 +981,7 @@ function ChapterReader({ manifest }: { manifest: BookReadManifest }) {
       { cache: 'no-store' }
     )
       .then((json) => {
+        if (cancelled) return;
         const shouldRestore =
           !restoredChapterPositionRef.current &&
           !initialChapterHref &&
@@ -992,8 +995,15 @@ function ChapterReader({ manifest }: { manifest: BookReadManifest }) {
           title: (json as BookChapterContent).title || item.title,
         });
       })
-      .catch((err) => setError(err.message || '获取章节失败'))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) setError(err.message || '获取章节失败');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [
     chapters,
     chaptersLoaded,
@@ -2204,6 +2214,7 @@ export default function BookReadPage() {
 
   useEffect(() => {
     if (!sourceId || !bookId) return;
+    let cancelled = false;
     fetch('/api/books/read/manifest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2222,10 +2233,16 @@ export default function BookReadPage() {
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || '获取阅读信息失败');
+        if (cancelled) return;
         setManifest(json);
         cacheBookDetail(json.book);
       })
-      .catch((err) => setError(err.message || '获取阅读信息失败'));
+      .catch((err) => {
+        if (!cancelled) setError(err.message || '获取阅读信息失败');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sourceId, bookId, cached]);
 
   useEffect(() => {

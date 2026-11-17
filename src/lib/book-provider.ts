@@ -181,11 +181,12 @@ export class BookProvider {
 
   async getPreferredAcquisition(
     sourceId: string,
-    href: string
+    href: string,
+    fallback?: Partial<BookDetail>
   ): Promise<{ format: 'epub' | 'pdf' | 'chapters'; href: string }> {
     const source = await this.getSourceById(sourceId);
     if (sourceKind(source) === 'legado') {
-      const detail = await legadoClient.getBookDetail(sourceId, href);
+      const detail = await legadoClient.getBookDetail(sourceId, href, fallback);
       const chapters =
         detail.acquisitionLinks.find(
           (item) => item.type === 'application/x-legado-chapters+json'

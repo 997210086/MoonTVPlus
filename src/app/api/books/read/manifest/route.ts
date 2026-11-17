@@ -34,7 +34,15 @@ async function resolveManifest(username: string, payload: ManifestPayload) {
 
     const existingRecord = bookId ? await db.getBookReadRecord(username, sourceId, bookId) : null;
     const shelfItem = bookId ? await db.getBookShelf(username, sourceId, bookId) : null;
-    const resolvedHref = href || existingRecord?.detailHref || shelfItem?.detailHref || '';
+    const bookIdAsHref =
+      bookId && (/^https?:\/\//i.test(bookId) || bookId.startsWith('/'))
+        ? bookId
+        : '';
+    const resolvedHref =
+      href ||
+      existingRecord?.detailHref ||
+      shelfItem?.detailHref ||
+      bookIdAsHref;
     const resolvedAcquisitionHref = acquisitionHref || existingRecord?.acquisitionHref || shelfItem?.acquisitionHref || '';
     const resolvedFormat = format || existingRecord?.format || shelfItem?.format || 'epub';
 
@@ -60,7 +68,14 @@ async function resolveManifest(username: string, payload: ManifestPayload) {
       acquisitionLinks: fallbackAcquisitionLinks,
     });
     const preferred = resolvedHref
-      ? await bookProvider.getPreferredAcquisition(sourceId, resolvedHref)
+      ? await bookProvider.getPreferredAcquisition(sourceId, resolvedHref, {
+          id: detail.id,
+          title: detail.title,
+          author: detail.author,
+          cover: detail.cover,
+          detailHref: detail.detailHref,
+          acquisitionLinks: detail.acquisitionLinks,
+        })
       : {
           format: resolvedFormat === 'chapters' ? 'chapters' : resolvedFormat === 'pdf' ? 'pdf' : 'epub',
           href: resolvedAcquisitionHref || '',
@@ -71,7 +86,7 @@ async function resolveManifest(username: string, payload: ManifestPayload) {
       book: detail,
       format: preferred.format,
       fileUrl: preferred.format === 'chapters' ? undefined : `/api/books/file?sourceId=${encodeURIComponent(sourceId)}&bookId=${encodeURIComponent(detail.id)}&format=${encodeURIComponent(preferred.format)}`,
-      chaptersUrl: preferred.format === 'chapters' ? `/api/books/read/chapters?sourceId=${encodeURIComponent(sourceId)}&bookId=${encodeURIComponent(detail.id)}` : undefined,
+      chaptersUrl: preferred.format === 'chapters' ? `/api/books/read/chapters?sourceId=${encodeURIComponent(sourceId)}&bookId=${encodeURIComponent(detail.id)}&href=${encodeURIComponent(preferred.href)}` : undefined,
       acquisitionHref: preferred.href,
       cacheKey: `${sourceId}::${detail.id}::${preferred.format}`,
       coverUrl: detail.cover,

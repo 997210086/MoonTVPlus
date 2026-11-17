@@ -50,7 +50,7 @@ function detailHref(item: BookListItem) {
   return buildBookDetailPath(item.sourceId, item.id);
 }
 
-const BOOK_SEARCH_STATE_KEY = 'book_search_state_v2';
+const BOOK_SEARCH_STATE_KEY = 'book_search_state_v3';
 const EMPTY_RESULT: BookSearchResult = { results: [], failedSources: [] };
 const QUICK_SEARCHES = ['三体', '刘慈欣', '东野圭吾', '哈利波特'];
 
@@ -82,10 +82,11 @@ export default function BooksSearchPage() {
   const currentSearchKeyRef = useRef('');
   const pendingResultsRef = useRef<BookListItem[]>([]);
   const flushTimerRef = useRef<number | null>(null);
+  const failedSourcesRef = useRef<BookSearchResult['failedSources']>([]);
 
   const getCacheKey = useCallback(
     (keyword: string, selectedSourceId: string) =>
-      `book_search_cache_v2_${selectedSourceId || 'all'}_${keyword.trim()}`,
+      `book_search_cache_v3_${selectedSourceId || 'all'}_${keyword.trim()}`,
     []
   );
 
@@ -225,6 +226,7 @@ export default function BooksSearchPage() {
       setTotalSources(0);
       setCompletedSources(0);
       setAvailableSources(0);
+      failedSourcesRef.current = [];
 
       const cached = forceRefresh
         ? null
@@ -237,9 +239,9 @@ export default function BooksSearchPage() {
           result: cached,
         });
         setLoading(false);
-        setTotalSources(1);
-        setCompletedSources(1);
-        setAvailableSources(1);
+        setTotalSources(cached.searchedSources || 1);
+        setCompletedSources(cached.searchedSources || 1);
+        setAvailableSources(cached.availableSources || 1);
         return;
       }
 
@@ -281,6 +283,13 @@ export default function BooksSearchPage() {
                 }
                 break;
               case 'source_error':
+                if (payload.sourceId) {
+                  failedSourcesRef.current.push({
+                    sourceId: payload.sourceId,
+                    sourceName: payload.sourceName || '未知书源',
+                    error: payload.error || '搜索失败',
+                  });
+                }
                 setCompletedSources((prev) =>
                   Math.max(prev + 1, payload.completedSources || 0)
                 );
@@ -292,7 +301,10 @@ export default function BooksSearchPage() {
                 break;
               case 'complete': {
                 const finalFailedSources: BookSearchResult['failedSources'] =
-                  [];
+                  Array.isArray(payload.failedSources) &&
+                  payload.failedSources.length > 0
+                    ? payload.failedSources
+                    : failedSourcesRef.current;
                 setCompletedSources(
                   payload.completedSources || payload.totalSources || 0
                 );
@@ -311,6 +323,8 @@ export default function BooksSearchPage() {
                       const nextResult = {
                         results: prev.results.concat(toAppend),
                         failedSources: finalFailedSources,
+                        searchedSources: payload.totalSources,
+                        availableSources: payload.availableSources,
                       };
                       setCachedResult(trimmed, normalizedSourceId, nextResult);
                       saveSearchState({
@@ -326,6 +340,8 @@ export default function BooksSearchPage() {
                     const nextResult = {
                       results: prev.results,
                       failedSources: finalFailedSources,
+                      searchedSources: payload.totalSources,
+                      availableSources: payload.availableSources,
                     };
                     setCachedResult(trimmed, normalizedSourceId, nextResult);
                     saveSearchState({
@@ -375,7 +391,9 @@ export default function BooksSearchPage() {
         if (!res.ok) throw new Error(json.error || '搜索失败');
         const nextResult: BookSearchResult = {
           results: json.results || [],
-          failedSources: [],
+          failedSources: json.failedSources || [],
+          searchedSources: json.searchedSources,
+          availableSources: json.availableSources,
         };
         setResult(nextResult);
         setTotalSources(json.searchedSources || 1);
@@ -451,6 +469,7 @@ export default function BooksSearchPage() {
       setTotalSources(0);
       setAvailableSources(0);
       setCompletedSources(0);
+      failedSourcesRef.current = [];
       setError('');
       return;
     }
@@ -660,6 +679,21 @@ export default function BooksSearchPage() {
           <MediaGridSkeleton count={12} />
         ) : null}
         {error ? <EmptyState tone='error' description={error} /> : null}
+
+        {!loading && result.failedSources.length > 0 ? (
+          <details className={cn(LIBRARY_PANEL, 'p-4 text-sm')}>
+            <summary className='cursor-pointer'>
+              {result.failedSources.length} 个书源暂时无法搜索，点击查看原因
+            </summary>
+            <ul className={cn('mt-3 space-y-2', LIBRARY_MUTED)}>
+              {result.failedSources.map((failure) => (
+                <li key={failure.sourceId}>
+                  {failure.sourceName}：{failure.error}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
 
         {result.results.length > 0 ? (
           <MediaGrid>

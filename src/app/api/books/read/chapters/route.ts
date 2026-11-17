@@ -18,10 +18,10 @@ export async function GET(request: NextRequest) {
 
     if (!sourceId) return NextResponse.json({ error: '缺少 sourceId' }, { status: 400 });
 
-    const chapters = bookId
-      ? await legadoClient.getChaptersByBookId(sourceId, bookId)
-      : href
-        ? await legadoClient.getChapters(sourceId, href)
+    const chapters = href
+      ? await legadoClient.getChapters(sourceId, href)
+      : bookId
+        ? await legadoClient.getChaptersByBookId(sourceId, bookId)
         : null;
     if (!chapters) return NextResponse.json({ error: '缺少 bookId 或 href，无法定位章节目录' }, { status: 400 });
     return NextResponse.json({ chapters }, { headers: { 'Cache-Control': 'no-store' } });

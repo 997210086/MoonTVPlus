@@ -218,6 +218,7 @@ export default function BookDetailPage() {
     const params = new URLSearchParams({
       sourceId: detail.sourceId,
       bookId: detail.id,
+      href: readable.href,
     });
     fetch(`/api/books/read/chapters?${params.toString()}`, {
       cache: 'no-store',
