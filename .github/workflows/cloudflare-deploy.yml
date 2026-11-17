@@ -2,6 +2,23 @@ name: Deploy to Cloudflare
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'apps/**'
+      - 'scripts/**'
+      - 'migrations/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'next.config.js'
+      - 'open-next.config.ts'
+      - 'wrangler.toml'
+      - 'cloudflare-worker.ts'
+      - '.github/workflows/cloudflare-deploy.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
