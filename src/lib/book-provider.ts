@@ -9,7 +9,7 @@ import {
 import { legadoClient } from './legado.client';
 import { opdsClient } from './opds.client';
 
-const DEFAULT_SEARCH_SOURCE_LIMIT = 16;
+const DEFAULT_SEARCH_SOURCE_LIMIT = 32;
 const DEFAULT_SEARCH_CONCURRENCY = 4;
 
 function sourceKind(source?: Pick<BookSource, 'type'>) {
@@ -57,23 +57,33 @@ function searchSourceScore(source: BookSource) {
   return score;
 }
 
-function selectSearchSources(sources: BookSource[]) {
+function selectSearchSources(
+  sources: BookSource[],
+  offset = 0,
+  requestedLimit?: number
+) {
   const limit = positiveInt(
-    process.env.BOOK_SEARCH_MAX_SOURCES,
+    requestedLimit ? String(requestedLimit) : process.env.BOOK_SEARCH_MAX_SOURCES,
     DEFAULT_SEARCH_SOURCE_LIMIT,
-    40
+    400
   );
-  const usable = sources.filter(isUsableSearchSource);
-  const selected = usable
+  const ranked = sources
+    .filter(isUsableSearchSource)
     .map((source, index) => ({
       source,
       index,
       score: searchSourceScore(source),
     }))
-    .sort((a, b) => b.score - a.score || a.index - b.index)
-    .slice(0, limit)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const normalizedOffset = Math.max(0, offset);
+  const selected = ranked
+    .slice(normalizedOffset, normalizedOffset + limit)
     .map((item) => item.source);
-  return { sources: selected, availableSources: usable.length };
+  return {
+    sources: selected,
+    availableSources: ranked.length,
+    nextOffset: normalizedOffset + selected.length,
+  };
 }
 
 export class BookProvider {
@@ -115,13 +125,35 @@ export class BookProvider {
   async getSearchSourceSelection(sourceId?: string): Promise<{
     sources: BookSource[];
     availableSources: number;
+    nextOffset?: number;
   }> {
     if (sourceId)
       return {
         sources: [await this.getSourceById(sourceId)],
         availableSources: 1,
+        nextOffset: 1,
       };
     return selectSearchSources(await this.getSources());
+  }
+
+  async getSearchSourceBatch(
+    sourceId?: string,
+    offset = 0,
+    limit?: number
+  ): Promise<{
+    sources: BookSource[];
+    availableSources: number;
+    nextOffset: number;
+  }> {
+    if (sourceId) {
+      const source = await this.getSourceById(sourceId);
+      return {
+        sources: offset > 0 ? [] : [source],
+        availableSources: 1,
+        nextOffset: 1,
+      };
+    }
+    return selectSearchSources(await this.getSources(), offset, limit);
   }
 
   async searchBooksSource(
@@ -133,10 +165,17 @@ export class BookProvider {
       : opdsClient.searchBooksSource(q, source);
   }
 
-  async searchBooks(q: string, sourceId?: string): Promise<BookSearchResult> {
-    const { sources, availableSources } = await this.getSearchSourceSelection(
-      sourceId
-    );
+  async searchBooks(
+    q: string,
+    sourceId?: string,
+    selectedSources?: BookSource[]
+  ): Promise<BookSearchResult> {
+    const { sources, availableSources } = selectedSources
+      ? {
+          sources: selectedSources,
+          availableSources: selectedSources.length,
+        }
+      : await this.getSearchSourceSelection(sourceId);
     const results: BookListItem[] = [];
     const failedSources: BookSearchFailure[] = [];
     const concurrency = positiveInt(
@@ -165,6 +204,7 @@ export class BookProvider {
       failedSources,
       searchedSources: sources.length,
       availableSources,
+      exhausted: sources.length >= availableSources,
     };
   }
 

@@ -50,7 +50,8 @@ function detailHref(item: BookListItem) {
   return buildBookDetailPath(item.sourceId, item.id);
 }
 
-const BOOK_SEARCH_STATE_KEY = 'book_search_state_v3';
+const BOOK_SEARCH_STATE_KEY = 'book_search_state_v4';
+const BOOK_SEARCH_CACHE_VERSION = 'v4';
 const EMPTY_RESULT: BookSearchResult = { results: [], failedSources: [] };
 const QUICK_SEARCHES = ['三体', '刘慈欣', '东野圭吾', '哈利波特'];
 
@@ -83,10 +84,44 @@ export default function BooksSearchPage() {
   const pendingResultsRef = useRef<BookListItem[]>([]);
   const flushTimerRef = useRef<number | null>(null);
   const failedSourcesRef = useRef<BookSearchResult['failedSources']>([]);
+  const searchRunRef = useRef<{
+    keyword: string;
+    sourceId: string;
+    nextOffset: number;
+    exhausted: boolean;
+    availableSources?: number;
+  } | null>(null);
+  const [searchRunState, setSearchRunState] = useState<{
+    nextOffset: number;
+    exhausted: boolean;
+    availableSources: number;
+  } | null>(null);
+
+  const syncSearchRun = useCallback(
+    (run: {
+      keyword: string;
+      sourceId: string;
+      nextOffset: number;
+      exhausted: boolean;
+      availableSources?: number;
+    } | null) => {
+      searchRunRef.current = run;
+      setSearchRunState(
+        run
+          ? {
+              nextOffset: run.nextOffset,
+              exhausted: run.exhausted,
+              availableSources: run.availableSources || 0,
+            }
+          : null
+      );
+    },
+    []
+  );
 
   const getCacheKey = useCallback(
     (keyword: string, selectedSourceId: string) =>
-      `book_search_cache_v3_${selectedSourceId || 'all'}_${keyword.trim()}`,
+      `book_search_cache_${BOOK_SEARCH_CACHE_VERSION}_${selectedSourceId || 'all'}_${keyword.trim()}`,
     []
   );
 
@@ -208,31 +243,46 @@ export default function BooksSearchPage() {
     async (
       keyword: string,
       selectedSourceId: string,
-      options?: { forceRefresh?: boolean }
+      options?: {
+        forceRefresh?: boolean;
+        append?: boolean;
+        offset?: number;
+      }
     ) => {
       const trimmed = keyword.trim();
       if (!trimmed) return;
       const normalizedSourceId = selectedSourceId || '';
       const searchKey = `${normalizedSourceId}::${trimmed}`;
       const forceRefresh = options?.forceRefresh === true;
+      const append = options?.append === true;
+      const offset = append ? Math.max(0, options?.offset || 0) : 0;
 
       closeEventSource();
       clearPendingResults();
-      currentSearchKeyRef.current = searchKey;
+      currentSearchKeyRef.current = `${searchKey}::${offset}`;
       setLoading(true);
       setError('');
       setHasSearched(true);
       setExecutedScope(normalizedSourceId);
-      setTotalSources(0);
+      if (!append) setTotalSources(0);
       setCompletedSources(0);
-      setAvailableSources(0);
-      failedSourcesRef.current = [];
+      if (!append) {
+        setAvailableSources(0);
+        failedSourcesRef.current = [];
+      }
 
-      const cached = forceRefresh
+      const cached = forceRefresh || append
         ? null
         : getCachedResult(trimmed, normalizedSourceId);
       if (cached) {
         setResult(cached);
+        syncSearchRun({
+          keyword: trimmed,
+          sourceId: normalizedSourceId,
+          nextOffset: cached.nextOffset || cached.searchedSources || 0,
+          exhausted: cached.exhausted === true,
+          availableSources: cached.availableSources,
+        });
         saveSearchState({
           q: trimmed,
           sourceId: normalizedSourceId,
@@ -245,7 +295,7 @@ export default function BooksSearchPage() {
         return;
       }
 
-      setResult(EMPTY_RESULT);
+      if (!append) setResult(EMPTY_RESULT);
 
       const currentFluidSearch = readFluidSearchSetting();
       setUseFluidSearch((prev) =>
@@ -254,13 +304,19 @@ export default function BooksSearchPage() {
 
       const params = new URLSearchParams({ q: trimmed });
       if (normalizedSourceId) params.set('sourceId', normalizedSourceId);
+      if (offset > 0) params.set('offset', String(offset));
+      params.set('limit', '32');
 
       if (currentFluidSearch) {
         const es = new EventSource(`/api/books/search/ws?${params.toString()}`);
         eventSourceRef.current = es;
 
         es.onmessage = (event) => {
-          if (!event.data || currentSearchKeyRef.current !== searchKey) return;
+          if (
+            !event.data ||
+            currentSearchKeyRef.current !== `${searchKey}::${offset}`
+          )
+            return;
           try {
             const payload = JSON.parse(event.data);
             switch (payload.type) {
@@ -270,6 +326,15 @@ export default function BooksSearchPage() {
                   payload.availableSources || payload.totalSources || 0
                 );
                 setCompletedSources(0);
+                if (typeof payload.nextOffset === 'number') {
+                  syncSearchRun({
+                    keyword: trimmed,
+                    sourceId: normalizedSourceId,
+                    nextOffset: payload.nextOffset,
+                    exhausted: false,
+                    availableSources: payload.availableSources,
+                  });
+                }
                 break;
               case 'source_result':
                 setCompletedSources((prev) =>
@@ -320,11 +385,20 @@ export default function BooksSearchPage() {
                   }
                   startTransition(() => {
                     setResult((prev) => {
+                      const mergedFailures = Array.from(
+                        new Map(
+                          prev.failedSources
+                            .concat(finalFailedSources)
+                            .map((failure) => [failure.sourceId, failure])
+                        ).values()
+                      );
                       const nextResult = {
                         results: prev.results.concat(toAppend),
-                        failedSources: finalFailedSources,
-                        searchedSources: payload.totalSources,
+                        failedSources: mergedFailures,
+                        searchedSources: payload.searchedSources,
                         availableSources: payload.availableSources,
+                        nextOffset: payload.nextOffset,
+                        exhausted: payload.exhausted,
                       };
                       setCachedResult(trimmed, normalizedSourceId, nextResult);
                       saveSearchState({
@@ -337,11 +411,20 @@ export default function BooksSearchPage() {
                   });
                 } else {
                   setResult((prev) => {
+                    const mergedFailures = Array.from(
+                      new Map(
+                        prev.failedSources
+                          .concat(finalFailedSources)
+                          .map((failure) => [failure.sourceId, failure])
+                      ).values()
+                    );
                     const nextResult = {
                       results: prev.results,
-                      failedSources: finalFailedSources,
-                      searchedSources: payload.totalSources,
+                      failedSources: mergedFailures,
+                      searchedSources: payload.searchedSources,
                       availableSources: payload.availableSources,
+                      nextOffset: payload.nextOffset,
+                      exhausted: payload.exhausted,
                     };
                     setCachedResult(trimmed, normalizedSourceId, nextResult);
                     saveSearchState({
@@ -352,6 +435,13 @@ export default function BooksSearchPage() {
                     return nextResult;
                   });
                 }
+                syncSearchRun({
+                  keyword: trimmed,
+                  sourceId: normalizedSourceId,
+                  nextOffset: payload.nextOffset || 0,
+                  exhausted: payload.exhausted === true,
+                  availableSources: payload.availableSources,
+                });
                 setLoading(false);
                 closeEventSource();
                 break;
@@ -363,7 +453,10 @@ export default function BooksSearchPage() {
         };
 
         es.onerror = () => {
-          if (currentSearchKeyRef.current !== searchKey) return;
+          if (
+            currentSearchKeyRef.current !== `${searchKey}::${offset}`
+          )
+            return;
           if (pendingResultsRef.current.length > 0) {
             const toAppend = pendingResultsRef.current;
             pendingResultsRef.current = [];
@@ -387,15 +480,32 @@ export default function BooksSearchPage() {
       try {
         const res = await fetch(`/api/books/search?${params.toString()}`);
         const json = await res.json();
-        if (currentSearchKeyRef.current !== searchKey) return;
+        if (currentSearchKeyRef.current !== `${searchKey}::${offset}`) return;
         if (!res.ok) throw new Error(json.error || '搜索失败');
         const nextResult: BookSearchResult = {
           results: json.results || [],
           failedSources: json.failedSources || [],
           searchedSources: json.searchedSources,
           availableSources: json.availableSources,
+          nextOffset: json.nextOffset,
+          exhausted: json.exhausted,
         };
-        setResult(nextResult);
+        if (append) {
+          setResult((prev) => ({
+            ...nextResult,
+            results: prev.results.concat(nextResult.results),
+            failedSources: prev.failedSources.concat(nextResult.failedSources),
+          }));
+        } else {
+          setResult(nextResult);
+        }
+        syncSearchRun({
+          keyword: trimmed,
+          sourceId: normalizedSourceId,
+          nextOffset: json.nextOffset || 0,
+          exhausted: json.exhausted === true,
+          availableSources: json.availableSources,
+        });
         setTotalSources(json.searchedSources || 1);
         setCompletedSources(json.searchedSources || 1);
         setAvailableSources(json.availableSources || 1);
@@ -406,11 +516,11 @@ export default function BooksSearchPage() {
           result: nextResult,
         });
       } catch (err) {
-        if (currentSearchKeyRef.current !== searchKey) return;
+        if (currentSearchKeyRef.current !== `${searchKey}::${offset}`) return;
         setError((err as Error).message || '搜索失败');
         setResult(EMPTY_RESULT);
       } finally {
-        if (currentSearchKeyRef.current === searchKey) {
+        if (currentSearchKeyRef.current === `${searchKey}::${offset}`) {
           setLoading(false);
         }
       }
@@ -423,8 +533,18 @@ export default function BooksSearchPage() {
       readFluidSearchSetting,
       saveSearchState,
       setCachedResult,
+      syncSearchRun,
     ]
   );
+
+  const searchMoreSources = useCallback(async () => {
+    const run = searchRunRef.current;
+    if (!run || loading || run.exhausted) return;
+    await performSearch(run.keyword, run.sourceId, {
+      append: true,
+      offset: run.nextOffset,
+    });
+  }, [loading, performSearch]);
 
   useEffect(() => {
     setUseFluidSearch(readFluidSearchSetting());
@@ -452,6 +572,16 @@ export default function BooksSearchPage() {
           setResult(cachedState.result || EMPTY_RESULT);
           setHasSearched(true);
           setExecutedScope(cachedState.sourceId || '');
+          syncSearchRun({
+            keyword: cachedState.q.trim(),
+            sourceId: cachedState.sourceId || '',
+            nextOffset:
+              cachedState.result?.nextOffset ||
+              cachedState.result?.searchedSources ||
+              0,
+            exhausted: cachedState.result?.exhausted === true,
+            availableSources: cachedState.result?.availableSources,
+          });
         }
         return;
       }
@@ -470,6 +600,7 @@ export default function BooksSearchPage() {
       setAvailableSources(0);
       setCompletedSources(0);
       failedSourcesRef.current = [];
+      syncSearchRun(null);
       setError('');
       return;
     }
@@ -482,6 +613,7 @@ export default function BooksSearchPage() {
     closeEventSource,
     performSearch,
     restoreSearchState,
+    syncSearchRun,
     urlQuery,
     urlSourceId,
   ]);
@@ -512,11 +644,21 @@ export default function BooksSearchPage() {
       );
     }
     if (sources.length === 0) return '全部书源';
-    if (availableSources > totalSources && totalSources > 0) {
-      return '全部书源 · 优先 ' + totalSources + '/' + availableSources;
+    const searchedSoFar = Math.max(
+      result.searchedSources || 0,
+      totalSources
+    );
+    if (availableSources > searchedSoFar && searchedSoFar > 0) {
+      return '全部书源 · 已搜 ' + searchedSoFar + '/' + availableSources;
     }
-    return `全部书源 · ${sources.length} 个书源`;
-  }, [availableSources, executedScope, sources, totalSources]);
+    return `全部书源 · ${availableSources || sources.length} 个书源`;
+  }, [
+    availableSources,
+    executedScope,
+    result.searchedSources,
+    sources,
+    totalSources,
+  ]);
 
   const searchProgress =
     totalSources > 0
@@ -693,6 +835,40 @@ export default function BooksSearchPage() {
               ))}
             </ul>
           </details>
+        ) : null}
+
+        {hasSearched && !executedScope && searchRunState ? (
+          <div
+            className={cn(
+              LIBRARY_PANEL,
+              'flex flex-wrap items-center justify-between gap-3 p-4 text-sm'
+            )}
+          >
+            <span className={LIBRARY_MUTED}>
+              {searchRunState.exhausted
+                ? `已搜索全部 ${searchRunState.availableSources} 个书源`
+                : `已搜索 ${result.searchedSources || totalSources}/${searchRunState.availableSources} 个书源，还有 ${Math.max(
+                    0,
+                    searchRunState.availableSources -
+                      (result.searchedSources || totalSources)
+                  )} 个未搜`}
+            </span>
+            {!searchRunState.exhausted ? (
+              <button
+                type='button'
+                onClick={() => void searchMoreSources()}
+                disabled={loading}
+                className={cn(LIBRARY_GHOST_BUTTON, 'cursor-pointer')}
+              >
+                {loading ? (
+                  <Loader2 className='h-4 w-4 animate-spin' />
+                ) : (
+                  <Search className='h-4 w-4' />
+                )}
+                继续搜索剩余书源
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         {result.results.length > 0 ? (

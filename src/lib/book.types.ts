@@ -171,6 +171,8 @@ export interface BookSearchResult {
   failedSources: BookSearchFailure[];
   searchedSources?: number;
   availableSources?: number;
+  nextOffset?: number;
+  exhausted?: boolean;
 }
 
 export interface BookLocator {

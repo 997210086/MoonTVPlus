@@ -17,6 +17,11 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q')?.trim();
   const sourceId = searchParams.get('sourceId')?.trim() || undefined;
+  const offset = Math.max(0, Number(searchParams.get('offset')) || 0);
+  const limit = Math.min(
+    40,
+    Math.max(1, Number(searchParams.get('limit')) || 32)
+  );
 
   if (!q) {
     return NextResponse.json({ error: '缺少搜索关键词' }, { status: 400 });
@@ -37,8 +42,8 @@ export async function GET(request: NextRequest) {
       };
 
       try {
-        const { sources, availableSources } =
-          await bookProvider.getSearchSourceSelection(sourceId);
+        const { sources, availableSources, nextOffset } =
+          await bookProvider.getSearchSourceBatch(sourceId, offset, limit);
         let completedSources = 0;
         let totalResults = 0;
         const failedSources: Array<{
@@ -47,7 +52,12 @@ export async function GET(request: NextRequest) {
           error: string;
         }> = [];
 
-        send({ type: 'start', totalSources: sources.length, availableSources });
+        send({
+          type: 'start',
+          totalSources: sources.length,
+          availableSources,
+          nextOffset,
+        });
 
         const concurrency = Math.min(
           8,
@@ -91,9 +101,12 @@ export async function GET(request: NextRequest) {
           type: 'complete',
           completedSources,
           totalSources: sources.length,
+          searchedSources: offset + sources.length,
           availableSources,
+          nextOffset,
           totalResults,
           failedSources,
+          exhausted: nextOffset >= availableSources,
         });
       } catch (error) {
         send({
