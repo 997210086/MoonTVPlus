@@ -22,8 +22,12 @@ export async function GET(request: NextRequest) {
 
     const records = await db.getAllBookReadRecords(username);
     return NextResponse.json(records, { status: 200 });
-  } catch {
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  } catch (error) {
+    console.error('Books history GET error:', error);
+    return NextResponse.json(
+      { error: (error as Error).message || 'Internal Server Error' },
+      { status: 500 }
+    );
   }
 }
 
@@ -73,8 +77,12 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true }, { status: 200 });
-  } catch {
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  } catch (error) {
+    console.error('Books history POST error:', error);
+    return NextResponse.json(
+      { error: (error as Error).message || 'Internal Server Error' },
+      { status: 500 }
+    );
   }
 }
 
@@ -96,7 +104,11 @@ export async function DELETE(request: NextRequest) {
       }));
     }
     return NextResponse.json({ success: true }, { status: 200 });
-  } catch {
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  } catch (error) {
+    console.error('Books history DELETE error:', error);
+    return NextResponse.json(
+      { error: (error as Error).message || 'Internal Server Error' },
+      { status: 500 }
+    );
   }
 }

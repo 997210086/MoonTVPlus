@@ -225,7 +225,19 @@ jobs:
           for migration_file in ./migrations/*.sql; do
             if [ -f "$migration_file" ]; then
               echo "Executing migration: $(basename $migration_file)"
-              wrangler d1 execute moontvplus --remote --file="$migration_file" || echo "⚠️ Migration may have been skipped (already applied)"
+              if ! wrangler d1 execute moontvplus --remote --file="$migration_file"; then
+                # All migrations are idempotent except legacy ALTER TABLE statements.
+                # Those can legitimately report duplicate column errors on an already-upgraded DB.
+                case "$(basename "$migration_file")" in
+                  014_ensure_legacy_columns.sql)
+                    echo "⚠️ Legacy column migration already applied; continuing"
+                    ;;
+                  *)
+                    echo "❌ Migration failed: $(basename "$migration_file")"
+                    exit 1
+                    ;;
+                esac
+              fi
             fi
           done
 

@@ -33,7 +33,7 @@ export interface D1Result<T = any> {
 export interface DatabaseAdapter {
   prepare(query: string): D1PreparedStatement;
   batch?(statements: D1PreparedStatement[]): Promise<D1Result[]>;
-  exec?(query: string): void;
+  exec?(query: string): void | Promise<unknown>;
 }
 
 /**
@@ -48,6 +48,10 @@ export class CloudflareD1Adapter implements DatabaseAdapter {
 
   async batch(statements: D1PreparedStatement[]): Promise<D1Result[]> {
     return this.db.batch(statements as any);
+  }
+
+  exec(query: string): Promise<D1Result> {
+    return this.db.exec(query);
   }
 }
 

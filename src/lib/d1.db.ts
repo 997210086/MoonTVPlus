@@ -31,6 +31,77 @@ import {
 import { userInfoCache } from './user-cache';
 import { dispatchNotificationChannels } from './notification-dispatch';
 
+const bookSchemaReady = new WeakMap<DatabaseAdapter, Promise<void>>();
+
+async function ensureBookSchema(db: DatabaseAdapter): Promise<void> {
+  const existing = bookSchemaReady.get(db);
+  if (existing) return existing;
+
+  const ready = (async () => {
+    const sql = `
+      CREATE TABLE IF NOT EXISTS book_shelf (
+        username TEXT NOT NULL,
+        key TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        book_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        author TEXT,
+        cover TEXT,
+        format TEXT,
+        detail_href TEXT,
+        acquisition_href TEXT,
+        progress_percent REAL,
+        last_read_time INTEGER,
+        last_locator_type TEXT,
+        last_locator_value TEXT,
+        last_chapter_title TEXT,
+        save_time INTEGER NOT NULL,
+        PRIMARY KEY (username, key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_book_shelf_user_time ON book_shelf(username, save_time DESC);
+      CREATE TABLE IF NOT EXISTS book_read_records (
+        username TEXT NOT NULL,
+        key TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        book_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        author TEXT,
+        cover TEXT,
+        format TEXT NOT NULL,
+        detail_href TEXT,
+        acquisition_href TEXT,
+        locator_type TEXT NOT NULL,
+        locator_value TEXT NOT NULL,
+        chapter_title TEXT,
+        chapter_href TEXT,
+        progress_percent REAL NOT NULL DEFAULT 0,
+        save_time INTEGER NOT NULL,
+        PRIMARY KEY (username, key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_book_read_records_user_time ON book_read_records(username, save_time DESC);
+    `;
+
+    if (db.exec) {
+      await db.exec(sql);
+      return;
+    }
+
+    for (const statement of sql.split(';').map((item) => item.trim()).filter(Boolean)) {
+      await db.prepare(statement).run();
+    }
+  })();
+
+  bookSchemaReady.set(db, ready);
+  try {
+    await ready;
+  } catch (error) {
+    bookSchemaReady.delete(db);
+    throw error;
+  }
+}
+
 /**
  * Cloudflare D1 存储实现
  *
@@ -2499,6 +2570,7 @@ export class D1Storage implements IStorage {
     key: string
   ): Promise<BookShelfItem | null> {
     try {
+      await ensureBookSchema(this.db);
       const result = await this.db
         .prepare('SELECT * FROM book_shelf WHERE username = ? AND key = ?')
         .bind(userName, key)
@@ -2542,6 +2614,7 @@ export class D1Storage implements IStorage {
     item: BookShelfItem
   ): Promise<void> {
     try {
+      await ensureBookSchema(this.db);
       await this.db
         .prepare(
           `
@@ -2598,6 +2671,7 @@ export class D1Storage implements IStorage {
     userName: string
   ): Promise<{ [key: string]: BookShelfItem }> {
     try {
+      await ensureBookSchema(this.db);
       const results = await this.db
         .prepare(
           'SELECT * FROM book_shelf WHERE username = ? ORDER BY COALESCE(last_read_time, save_time) DESC'
@@ -2642,6 +2716,7 @@ export class D1Storage implements IStorage {
 
   async deleteBookShelf(userName: string, key: string): Promise<void> {
     try {
+      await ensureBookSchema(this.db);
       await this.db
         .prepare('DELETE FROM book_shelf WHERE username = ? AND key = ?')
         .bind(userName, key)
@@ -2659,6 +2734,7 @@ export class D1Storage implements IStorage {
     key: string
   ): Promise<BookReadRecord | null> {
     try {
+      await ensureBookSchema(this.db);
       const result = await this.db
         .prepare(
           'SELECT * FROM book_read_records WHERE username = ? AND key = ?'
@@ -2699,6 +2775,7 @@ export class D1Storage implements IStorage {
     record: BookReadRecord
   ): Promise<void> {
     try {
+      await ensureBookSchema(this.db);
       await this.db
         .prepare(
           `
@@ -2755,6 +2832,7 @@ export class D1Storage implements IStorage {
     userName: string
   ): Promise<{ [key: string]: BookReadRecord }> {
     try {
+      await ensureBookSchema(this.db);
       const results = await this.db
         .prepare(
           'SELECT * FROM book_read_records WHERE username = ? ORDER BY save_time DESC'
@@ -2795,6 +2873,7 @@ export class D1Storage implements IStorage {
 
   async deleteBookReadRecord(userName: string, key: string): Promise<void> {
     try {
+      await ensureBookSchema(this.db);
       await this.db
         .prepare('DELETE FROM book_read_records WHERE username = ? AND key = ?')
         .bind(userName, key)
@@ -2807,6 +2886,7 @@ export class D1Storage implements IStorage {
 
   async cleanupOldBookReadRecords(userName: string): Promise<void> {
     try {
+      await ensureBookSchema(this.db);
       const maxRecords = parseInt(
         process.env.MAX_BOOK_HISTORY_PER_USER || '100',
         10
