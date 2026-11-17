@@ -290,3 +290,59 @@ jobs:
             exit 1
           fi
           echo "✅ Books shelf API is available"
+
+      - name: Configure and smoke test music
+        env:
+          OWNER_USERNAME: ${{ secrets.USERNAME }}
+          OWNER_PASSWORD: ${{ secrets.PASSWORD }}
+          MUSIC_SERVER_URL: https://lx.38-14-193-154.sslip.io
+        run: |
+          cookie_jar="$(mktemp)"
+          login_payload="$(jq -n --arg username "$OWNER_USERNAME" --arg password "$OWNER_PASSWORD" '{username: $username, password: $password}')"
+          login_status="$(curl -sS -c "$cookie_jar" -o /tmp/moontv-music-login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "$login_payload" \
+            https://moomtv.990720.xyz/api/login)"
+          if [ "$login_status" != "200" ]; then
+            echo "❌ Music smoke test login failed with HTTP $login_status"
+            cat /tmp/moontv-music-login.json
+            exit 1
+          fi
+
+          music_config="$(jq -n --arg baseUrl "$MUSIC_SERVER_URL" \
+            '{Enabled: true, BaseUrl: $baseUrl, Token: "", ProxyEnabled: true}')"
+          config_status="$(curl -sS -b "$cookie_jar" -o /tmp/moontv-music-config.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "$music_config" \
+            https://moomtv.990720.xyz/api/admin/music)"
+          if [ "$config_status" != "200" ]; then
+            echo "❌ Saving music configuration failed with HTTP $config_status"
+            cat /tmp/moontv-music-config.json
+            exit 1
+          fi
+
+          search_status="$(curl -sS -b "$cookie_jar" -o /tmp/moontv-music-search.json -w '%{http_code}' \
+            'https://moomtv.990720.xyz/api/music/v2/search?source=wy&type=song&page=1&limit=1&q=%E6%99%B4%E5%A4%A9')"
+          if [ "$search_status" != "200" ] || [ "$(jq -r '.data.list | length' /tmp/moontv-music-search.json)" = "0" ]; then
+            echo "❌ Music search failed with HTTP $search_status"
+            cat /tmp/moontv-music-search.json
+            exit 1
+          fi
+
+          play_payload="$(jq -c '{quality:"320k", song: .data.list[0]}' /tmp/moontv-music-search.json)"
+          play_status="$(curl -sS -b "$cookie_jar" -o /tmp/moontv-music-play.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "$play_payload" \
+            https://moomtv.990720.xyz/api/music/v2/play)"
+          if [ "$play_status" != "200" ] || [ -z "$(jq -r '.data.play.directUrl // empty' /tmp/moontv-music-play.json)" ]; then
+            echo "❌ Music play resolution failed with HTTP $play_status"
+            cat /tmp/moontv-music-play.json
+            exit 1
+          fi
+
+          homepage="$(curl -sS -b "$cookie_jar" https://moomtv.990720.xyz/)"
+          if ! printf '%s' "$homepage" | grep -q 'MUSIC_ENABLED.*true'; then
+            echo "❌ Music feature flag is not enabled in runtime config"
+            exit 1
+          fi
+          echo "✅ Music search and play resolution are available"
