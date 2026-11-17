@@ -83,12 +83,16 @@ async function ensureBookSchema(db: DatabaseAdapter): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_book_read_records_user_time ON book_read_records(username, save_time DESC);
     `;
 
-    if (db.exec) {
-      await db.exec(sql);
+    const statements = sql
+      .split(';')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (db.batch) {
+      await db.batch(statements.map((statement) => db.prepare(statement)));
       return;
     }
 
-    for (const statement of sql.split(';').map((item) => item.trim()).filter(Boolean)) {
+    for (const statement of statements) {
       await db.prepare(statement).run();
     }
   })();
