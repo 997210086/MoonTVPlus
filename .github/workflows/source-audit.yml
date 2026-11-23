@@ -1,0 +1,42 @@
+name: Source Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login and dump current video sources
+        env:
+          SITE: https://moomtv.990720.xyz
+          OWNER_USERNAME: ${{ secrets.USERNAME }}
+          OWNER_PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          set -euo pipefail
+          cookie_jar="$(mktemp)"
+          login_payload="$(jq -n --arg username "$OWNER_USERNAME" --arg password "$OWNER_PASSWORD" '{username: $username, password: $password}')"
+          login_status="$(curl -sS -c "$cookie_jar" -o /tmp/login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "$login_payload" \
+            "$SITE/api/login")"
+          echo "login_status=$login_status"
+          if [ "$login_status" != "200" ]; then
+            cat /tmp/login.json
+            exit 1
+          fi
+
+          cfg_status="$(curl -sS -b "$cookie_jar" -o /tmp/config.json -w '%{http_code}' "$SITE/api/admin/config")"
+          echo "config_status=$cfg_status"
+          if [ "$cfg_status" != "200" ]; then
+            cat /tmp/config.json
+            exit 1
+          fi
+
+          echo "===== SOURCES_BEGIN ====="
+          jq -r '.Config.SourceConfig[] | "\(.key)\t\(.name)\t\(.disabled // false)\t\(.from)\t\(.api)"' /tmp/config.json
+          echo "===== SOURCES_END ====="
+          echo "total=$(jq -r '.Config.SourceConfig | length' /tmp/config.json)"
