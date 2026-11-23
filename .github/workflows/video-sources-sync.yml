@@ -1,0 +1,81 @@
+name: Video Sources Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply the plan (false = dry run, only report)'
+        required: true
+        default: 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply video source cleanup plan
+        env:
+          SITE: https://moomtv.990720.xyz
+          OWNER_USERNAME: ${{ secrets.USERNAME }}
+          OWNER_PASSWORD: ${{ secrets.PASSWORD }}
+          APPLY: ${{ github.event.inputs.apply }}
+        run: |
+          set -euo pipefail
+          cookie_jar="$(mktemp)"
+          login_payload="$(jq -n --arg username "$OWNER_USERNAME" --arg password "$OWNER_PASSWORD" '{username: $username, password: $password}')"
+          login_status="$(curl -sS -c "$cookie_jar" -o /tmp/login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' --data "$login_payload" "$SITE/api/login")"
+          if [ "$login_status" != "200" ]; then echo "login failed $login_status"; cat /tmp/login.json; exit 1; fi
+
+          curl -sS -b "$cookie_jar" -o /tmp/config.json "$SITE/api/admin/config"
+          jq -r '.Config.SourceConfig[] | "\(.key)\t\(.disabled // false)"' /tmp/config.json > /tmp/before.tsv
+          echo "before: total=$(wc -l < /tmp/before.tsv) enabled=$(grep -c $'\tfalse' /tmp/before.tsv || true)"
+
+          plan="$(cat deploy/video-source-plan.json)"
+          # keys present on the server that the plan wants disabled
+          jq -r '.disable[]' <<<"$plan" | sort > /tmp/plan-disable.txt
+          cut -f1 /tmp/before.tsv | sort > /tmp/server-keys.txt
+          comm -12 /tmp/plan-disable.txt /tmp/server-keys.txt > /tmp/disable-now.txt
+          echo "will disable: $(wc -l < /tmp/disable-now.txt) missing-from-server: $(( $(wc -l < /tmp/plan-disable.txt) - $(wc -l < /tmp/disable-now.txt) ))"
+
+          if [ "$APPLY" != "true" ]; then
+            echo "dry run; not applying"
+            exit 0
+          fi
+
+          # batch disable in chunks of 100
+          split -l 100 /tmp/disable-now.txt /tmp/disable-chunk-
+          for chunk in /tmp/disable-chunk-*; do
+            keys_json="$(jq -R -s 'split("\n") | map(select(length>0))' "$chunk")"
+            body="$(jq -n --argjson keys "$keys_json" '{action:"batch_disable", keys:$keys}')"
+            status="$(curl -sS -b "$cookie_jar" -o /tmp/dis.json -w '%{http_code}' \
+              -H 'Content-Type: application/json' --data "$body" "$SITE/api/admin/source")"
+            echo "batch_disable $status $(cat /tmp/dis.json)"
+            if [ "$status" != "200" ]; then exit 1; fi
+          done
+
+          # weights
+          weights_json="$(jq -c '.weights | to_entries | map({key:.key, weight:.value})' <<<"$plan")"
+          body="$(jq -n --argjson weights "$weights_json" '{action:"batch_update_weights", weights:$weights}')"
+          status="$(curl -sS -b "$cookie_jar" -o /tmp/w.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' --data "$body" "$SITE/api/admin/source")"
+          echo "batch_update_weights $status $(cat /tmp/w.json)"
+          if [ "$status" != "200" ]; then exit 1; fi
+
+          # verify
+          curl -sS -b "$cookie_jar" -o /tmp/after.json "$SITE/api/admin/config"
+          jq -r '.Config.SourceConfig[] | "\(.disabled // false)"' /tmp/after.json > /tmp/after-flags.txt
+          echo "after: total=$(wc -l < /tmp/after-flags.txt) enabled=$(grep -c '^false$' /tmp/after-flags.txt || true)"
+          echo "===== ENABLED AFTER ====="
+          jq -r '.Config.SourceConfig[] | select((.disabled//false)==false) | "\(.key)\t\(.name)\t\(.weight//0)"' /tmp/after.json
+
+          # timed search
+          t="$(curl -sS -b "$cookie_jar" -o /tmp/search.json -w '%{time_total}' --get \
+            --data-urlencode 'q=斗罗大陆' "$SITE/api/search")"
+          echo "search_time=${t}s results=$(jq -r '.results | length' /tmp/search.json)"
+          jq -r '.results | group_by(.source) | map({source: .[0].source, n: length}) | sort_by(-.n) | .[0:15][] | "\(.n)\t\(.source)"' /tmp/search.json
