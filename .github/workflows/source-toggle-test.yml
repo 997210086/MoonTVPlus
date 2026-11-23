@@ -1,0 +1,38 @@
+name: Source Toggle Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Toggle a few keys and read back
+        env:
+          SITE: https://moomtv.990720.xyz
+          OWNER_USERNAME: ${{ secrets.USERNAME }}
+          OWNER_PASSWORD: ${{ secrets.PASSWORD }}
+        run: |
+          set -euo pipefail
+          jar="$(mktemp)"
+          payload="$(jq -n --arg u "$OWNER_USERNAME" --arg p "$OWNER_PASSWORD" '{username:$u,password:$p}')"
+          code="$(curl -sS -c "$jar" -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data "$payload" "$SITE/api/login")"
+          echo "login=$code"
+          curl -sS -b "$jar" -c "$jar" -o /tmp/a.json "$SITE/api/admin/config"
+          echo "BEFORE: $(jq -r '.Config.SourceConfig[] | select(.key=="api_5" or .key=="api_42" or .key=="iqiyi") | "\(.key)=\(.disabled//false) from=\(.from)"' /tmp/a.json)"
+
+          body='{"action":"batch_disable","keys":["api_5","api_42","iqiyi"]}'
+          code="$(curl -sS -b "$jar" -c "$jar" -o /tmp/resp.json -w '%{http_code}' -H 'Content-Type: application/json' --data "$body" "$SITE/api/admin/source")"
+          echo "disable=$code $(cat /tmp/resp.json)"
+
+          # reload then read from db
+          curl -sS -b "$jar" -c "$jar" -o /dev/null "$SITE/api/admin/reload"
+          curl -sS -b "$jar" -c "$jar" -o /tmp/b.json "$SITE/api/admin/config"
+          echo "AFTER-RELOAD: $(jq -r '.Config.SourceConfig[] | select(.key=="api_5" or .key=="api_42" or .key=="iqiyi") | "\(.key)=\(.disabled//false)"' /tmp/b.json)"
+
+          # also check the enabled-sources endpoint
+          curl -sS -b "$jar" -c "$jar" -o /tmp/src.json "$SITE/api/source-search/sources"
+          echo "enabled_sources=$(jq -r '.sources | length' /tmp/src.json)"
