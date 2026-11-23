@@ -79,6 +79,12 @@ export const API_CONFIG = {
 let cachedConfig: AdminConfig;
 let configInitPromise: Promise<AdminConfig> | null = null;
 
+// 内存缓存时间戳与有效期。缓存必须在 TTL 后失效,
+// 否则每个 Worker 实例会长期缓存同一份配置,
+// 导致后台的源/站点变更无法在各个实例之间传播。
+let cachedConfigAt = 0;
+const CONFIG_CACHE_TTL_MS = Number(process.env.CONFIG_CACHE_TTL_MS) || 60000;
+
 // 从配置文件文本里读 special_source_apis（兼容驼峰写法）
 function readSpecialSourceApisFromFile(configFile?: string): string[] {
   if (!configFile) {
@@ -444,8 +450,9 @@ async function getInitConfig(
 }
 
 export async function getConfig(): Promise<AdminConfig> {
-  // 直接使用内存缓存
-  if (cachedConfig) {
+  // 内存缓存(带 TTL)。过期后从存储重新读取,
+  // 让后台配置变更能在各个 Worker 实例之间传播。
+  if (cachedConfig && Date.now() - cachedConfigAt < CONFIG_CACHE_TTL_MS) {
     return cachedConfig;
   }
 
@@ -463,6 +470,7 @@ export async function getConfig(): Promise<AdminConfig> {
       console.log('localStorage 模式：从环境变量初始化配置');
       const adminConfig = await getInitConfig('');
       cachedConfig = configSelfCheck(adminConfig);
+      cachedConfigAt = Date.now();
       configInitPromise = null;
       return cachedConfig;
     }
@@ -499,6 +507,7 @@ export async function getConfig(): Promise<AdminConfig> {
 
     adminConfig = configSelfCheck(adminConfig);
     cachedConfig = adminConfig;
+    cachedConfigAt = Date.now();
 
     // 如果进行了Emby配置迁移，保存到数据库
     if (!dbReadFailed && needsEmbyMigration) {
@@ -526,6 +535,7 @@ export async function getConfig(): Promise<AdminConfig> {
           adminConfig.UserConfig.Users = [];
           await db.saveAdminConfig(adminConfig);
           cachedConfig = adminConfig;
+          cachedConfigAt = Date.now();
           console.log('用户自动迁移完成');
         }
       } catch (error) {
@@ -1279,6 +1289,7 @@ export async function resetConfig() {
     originConfig.ConfigSubscribtion
   );
   cachedConfig = adminConfig;
+  cachedConfigAt = Date.now();
   await db.saveAdminConfig(adminConfig);
 
   return;
@@ -1365,9 +1376,11 @@ export async function getAvailableApiSites(
 
 export async function setCachedConfig(config: AdminConfig) {
   cachedConfig = config;
+  cachedConfigAt = Date.now();
 }
 
 export async function clearConfigCache() {
   cachedConfig = null as any;
+  cachedConfigAt = 0;
   configInitPromise = null;
 }
