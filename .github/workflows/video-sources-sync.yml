@@ -75,7 +75,10 @@ jobs:
           jq -r '.Config.SourceConfig[] | select((.disabled//false)==false) | "\(.key)\t\(.name)\t\(.weight//0)"' /tmp/after.json
 
           # timed search
-          t="$(curl -sS -b "$cookie_jar" -o /tmp/search.json -w '%{time_total}' --get \
-            --data-urlencode 'q=斗罗大陆' "$SITE/api/search")"
-          echo "search_time=${t}s results=$(jq -r '.results | length' /tmp/search.json)"
-          jq -r '.results | group_by(.source) | map({source: .[0].source, n: length}) | sort_by(-.n) | .[0:15][] | "\(.n)\t\(.source)"' /tmp/search.json
+          # timed searches across several keywords
+          for q in 斗罗大陆 庆余年 甄嬛传; do
+            t="$(curl -sS -b "$cookie_jar" -o /tmp/search.json -w '%{time_total}' --get \
+              --data-urlencode "q=$q" "$SITE/api/search")"
+            echo "search q=$q time=${t}s results=$(jq -r '.results | length' /tmp/search.json)"
+          done
+          jq -r '.results | group_by(.source) | map({source: .[0].source, n: length}) | sort_by(-.n) | .[0:12][] | "\(.n)\t\(.source)"' /tmp/search.json
